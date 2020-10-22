@@ -61,6 +61,7 @@ usage() {
     echo "                          back to managed"
     echo "  --mac <MAC>             Set MAC address"
     echo "  --dhcp-dns <IP1[,IP2]>  Set DNS returned by DHCP"
+    echo "  --dhcp-hosts <file>     Load DHCP address reservation list from file"
     echo "  --daemon                Run create_ap in the background"
     echo "  --pidfile <pidfile>     Save daemon PID to file"
     echo "  --logfile <logfile>     Save daemon messages to file"
@@ -677,6 +678,7 @@ BRIDGE_IFACE=
 OLD_MACADDR=
 IP_ADDRS=
 ROUTE_ADDRS=
+DHCP_HOSTS=/home/descovid/ap-config/dhcp_hosts.conf
 
 HAVEGED_WATCHDOG_PID=
 
@@ -1054,7 +1056,7 @@ for ((i=0; i<$#; i++)); do
     fi
 done
 
-GETOPT_ARGS=$(getopt -o hc:w:g:de:nm: -l "help","hidden","hostapd-debug:","redirect-to-localhost","mac-filter","mac-filter-accept:","isolate-clients","ieee80211n","ieee80211ac","ht_capab:","vht_capab:","driver:","no-virt","fix-unmanaged","country:","freq-band:","mac:","dhcp-dns:","daemon","pidfile:","logfile:","stop:","list","list-running","list-clients:","version","psk","no-haveged","no-dns","no-dnsmasq","mkconfig:","config:" -n "$PROGNAME" -- "$@")
+GETOPT_ARGS=$(getopt -o hc:w:g:de:nm: -l "help","hidden","hostapd-debug:","redirect-to-localhost","mac-filter","mac-filter-accept:","isolate-clients","ieee80211n","ieee80211ac","ht_capab:","vht_capab:","driver:","no-virt","fix-unmanaged","country:","freq-band:","mac:","dhcp-dns:","dhcp-hosts","daemon","pidfile:","logfile:","stop:","list","list-running","list-clients:","version","psk","no-haveged","no-dns","no-dnsmasq","mkconfig:","config:" -n "$PROGNAME" -- "$@")
 [[ $? -ne 0 ]] && exit 1
 eval set -- "$GETOPT_ARGS"
 
@@ -1170,6 +1172,12 @@ while :; do
             DHCP_DNS="$1"
             shift
             ;;
+        # --dhcp-hosts)
+        #     shift
+        #     DHCP_HOSTS="$1"
+        #     echo "DHCP_HOSTS = '${DHCP_HOSTS}'"
+        #     shift
+        #     ;;
         --daemon)
             shift
             DAEMONIZE=1
@@ -1352,6 +1360,7 @@ if [[ $FREQ_BAND != 5 && $CHANNEL -gt 14 ]]; then
 fi
 
 WIFI_IFACE=$1
+echo "Using DHCP_HOSTS = '${DHCP_HOSTS}'"
 
 if ! is_wifi_interface ${WIFI_IFACE}; then
     echo "ERROR: '${WIFI_IFACE}' is not a WiFi interface" >&2
@@ -1733,6 +1742,20 @@ EOF
         cat << EOF >> $CONFDIR/dnsmasq.conf
 address=/#/$GATEWAY
 EOF
+    fi
+    if [[ ! -z $DHCP_HOSTS ]]; then
+        if [[ ! -f $DHCP_HOSTS ]]; then
+            echo "ERROR: IP reservation list file ${DHCP_HOSTS} not found." >&2
+            exit 1
+        fi
+        while IFS='' read -r dhcp_assignment || [[ -n "$dhcp_assignment" ]]; do
+            [[ "$dhcp_assignment" =~ ^$ ]] && continue # Skip empty lines
+            [[ "$dhcp_assignment" =~ ^#.*$ ]] && continue # Skip comment lines
+            dhcp_host_entry="$( echo "$dhcp_assignment" | sed 's/#.*$//g')" # Remove trailing comments
+            dhcp_host_entry="$( echo "$dhcp_host_entry" | sed 's/[[:space:]][[:space:]]*/,/g')" # Change column separators to commas
+            dhcp_host_entry="$( echo "$dhcp_host_entry" | sed 's/\,$//')" # Remove any trailing commas
+            echo "dhcp-host=$dhcp_host_entry" >> $CONFDIR/dnsmasq.conf
+        done < "$DHCP_HOSTS"
     fi
 fi
 
